@@ -24,13 +24,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nilskluewer/pi-extensions.git",
-    "directory": "packages/gcp-agent-platform"
+    "url": "git+https://github.com/nilskluewer/pi-gcp-agent-platform.git"
   },
   "bugs": {
-    "url": "https://github.com/nilskluewer/pi-extensions/issues"
+    "url": "https://github.com/nilskluewer/pi-gcp-agent-platform/issues"
   },
-  "homepage": "https://github.com/nilskluewer/pi-extensions/tree/main/packages/gcp-agent-platform#readme",
+  "homepage": "https://github.com/nilskluewer/pi-gcp-agent-platform#readme",
   "files": [
     "extensions",
     "README.md",
