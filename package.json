@@ -1,7 +1,7 @@
 {
   "name": "@nilskluewer/pi-gcp-agent-platform",
-  "version": "0.1.0",
-  "description": "Connect Pi to Google Cloud Agent Platform / Vertex AI with OAuth transport and EU/US multi-region endpoint support.",
+  "version": "0.2.0",
+  "description": "Use Claude and Gemini models on Google Cloud Vertex AI / Gemini Enterprise Agent Platform from pi.",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -37,14 +37,18 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/gcp-agent-platform"
+      "./extensions/gcp-agent-platform/index.ts"
     ]
   },
+  "dependencies": {
+    "@anthropic-ai/vertex-sdk": "^0.19.0"
+  },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"
   },
   "scripts": {
-    "pack:dry": "npm pack --dry-run"
+    "pack:dry": "npm pack --dry-run --registry=https://registry.npmjs.org/"
   },
   "publishConfig": {
     "access": "public",

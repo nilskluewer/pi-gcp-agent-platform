@@ -1,36 +1,146 @@
 # @nilskluewer/pi-gcp-agent-platform
 
-Connect Pi to Google Cloud Agent Platform / Vertex AI.
+## Overview
 
-This package adds a small Pi extension that prepares the Node.js runtime for Google Cloud
-Agent Platform / Vertex AI usage from Pi, especially for Claude and Gemini access through
-Google Cloud.
+Use Claude and Gemini models through Google Cloud Vertex AI / Gemini Enterprise Agent
+Platform in [pi](https://github.com/earendil-works/pi).
 
-## What it does
+This package contains both Vertex model adapters:
 
-- Supports Google OAuth / STS token calls from Pi's Node.js runtime.
-- Supports `eu` and `us` Vertex AI multi-region endpoints for Anthropic Vertex clients.
-- Keeps the behavior narrow and transparent: only Google auth transport and Vertex
-  multi-region endpoint handling are touched.
+- `anthropic-vertex` uses Anthropic's `AnthropicVertex` client for Claude.
+- `google-vertex` uses pi's native Google Vertex provider for Gemini.
 
-## Install
+The Google Cloud project, location, and Application Default Credentials setup are shared
+by both providers.
+
+## Getting Started
 
 ```bash
 pi install npm:@nilskluewer/pi-gcp-agent-platform
+pi
+/setup-gemini-vertexai your-project-id eu
+/model google-vertex/gemini-3.1-flash-lite
 ```
 
-## Configuration
+Select Claude in the same session with:
 
-The extension honors the normal Google Cloud / Vertex environment variables used by Pi and
-its providers, for example:
+```text
+/model anthropic-vertex/claude-opus-5
+```
 
-- `GOOGLE_CLOUD_LOCATION`
-- `CLOUD_ML_REGION`
-- `VERTEX_REGION`
-- `ANTHROPIC_VERTEX_BASE_URL`
+The legacy `/setup-vertexai` command remains available as an alias.
 
-For `eu` and `us`, it derives the correct multi-region Vertex base URL when no explicit
-custom `ANTHROPIC_VERTEX_BASE_URL` is already set.
+## Structure
+
+```text
+.
+├── extensions/
+│   └── gcp-agent-platform/
+│       ├── index.ts       # shared setup and provider registration
+│       └── anthropic.ts    # AnthropicVertex adapter for Claude
+├── LICENSE
+├── README.md
+└── package.json
+```
+
+## Setup
+
+Requirements:
+
+- Google Cloud project with the Vertex AI API enabled.
+- Claude and/or Gemini models enabled and available in Vertex AI / Gemini Enterprise
+  Agent Platform.
+- `gcloud` installed for Google Application Default Credentials.
+
+Run the setup command in pi:
+
+```text
+/setup-gemini-vertexai <google-cloud-project> [location]
+```
+
+Examples:
+
+```text
+/setup-gemini-vertexai my-project-id eu
+/setup-gemini-vertexai my-project-id global
+```
+
+The command stores the shared project and location in:
+
+```text
+~/.pi/agent/gcp-agent-platform.json
+```
+
+It also checks Google Application Default Credentials and can start:
+
+```bash
+gcloud auth application-default login
+```
+
+Environment variables override the saved setup:
+
+| Name | Description | Default |
+|------|-------------|---------|
+| `GOOGLE_CLOUD_PROJECT` | Google Cloud project ID. | Saved setup value |
+| `ANTHROPIC_VERTEX_PROJECT_ID` | Claude-compatible project ID fallback. | Optional |
+| `GCLOUD_PROJECT` | Google Cloud project ID fallback. | Optional |
+| `GOOGLE_CLOUD_LOCATION` | Vertex region or multi-region. | Saved setup value or `eu` |
+| `CLOUD_ML_REGION` | Region fallback. | Optional |
+| `VERTEX_REGION` | Additional region fallback. | Optional |
+
+The package reads the former Anthropic Vertex setup file as a migration fallback, but
+new configuration is written only to `gcp-agent-platform.json`.
+
+## Endpoints and model availability
+
+| Location | Endpoint |
+|----------|----------|
+| `global` | `https://aiplatform.googleapis.com` |
+| `eu` | EU multi-region Vertex endpoint |
+| `us` | US multi-region Vertex endpoint |
+| other regions | Regional Vertex endpoint |
+
+Model availability depends on the selected location and the Google Cloud project. For
+example, some Gemini models available on `global` are not available in `eu`.
+
+## Models
+
+Use any Claude model exposed by pi's Anthropic catalog and available in the project:
+
+```text
+/model anthropic-vertex/claude-opus-5
+/model anthropic-vertex/claude-sonnet-5
+/model anthropic-vertex/claude-opus-4-8
+```
+
+Use any Gemini model exposed by pi's Google Vertex catalog and available in the project:
+
+```text
+/model google-vertex/gemini-3.1-flash-lite
+/model google-vertex/gemini-3.5-flash
+```
+
+Vertex AI does not support Anthropic's server-side `fallbacks` request parameter. The
+Claude adapter removes that Anthropic-only model metadata before sending requests.
+
+## Run without installing
+
+```bash
+pi -e npm:@nilskluewer/pi-gcp-agent-platform
+```
+
+## Migration from the standalone packages
+
+Use this package as the single canonical Vertex package. The former standalone
+Anthropic package is no longer needed in pi settings.
+
+```bash
+pi remove /path/to/pi-anthropic-vertex-enterprise-agent-platform
+pi install npm:@nilskluewer/pi-gcp-agent-platform
+```
+
+`pi-vertex-gemini-search` is a separate optional web-search extension and is not part of
+this model package.
 
 ## License
 
