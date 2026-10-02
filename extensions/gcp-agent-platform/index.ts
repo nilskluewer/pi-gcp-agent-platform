@@ -26,6 +26,7 @@ import {
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { registerAnthropicVertexProvider } from "./anthropic.ts";
+import { registerVertexImagesProvider } from "./images.ts";
 
 type VertexSetupConfig = {
   project?: string;
@@ -53,6 +54,7 @@ export default function (pi: ExtensionAPI) {
     currentRegion,
     getVertexBaseUrl(currentRegion),
   );
+  registerVertexImagesProvider(pi, currentProject, currentRegion, getVertexBaseUrl(currentRegion));
 
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.setStatus(
@@ -183,6 +185,7 @@ function registerSetupCommand(pi: ExtensionAPI): void {
       region,
       getVertexBaseUrl(region),
     );
+    registerVertexImagesProvider(pi, project, region, getVertexBaseUrl(region));
 
     const authOk = checkApplicationDefaultCredentials();
     if (!authOk && ctx.hasUI) {

@@ -120,6 +120,20 @@ Use any Gemini model exposed by pi's Google Vertex catalog and available in the 
 /model google-vertex/gemini-3.5-flash
 ```
 
+### Image model
+
+`google-vertex-images/gemini-3.1-flash-image` (Nano Banana 2) is registered as a pi image
+model. Image models are not in `/model`; scripts reach them through the `codemode` tool
+(`defaultTools: ["+codemode"]`). `eu` and `global` serve it; usage counts toward session cost.
+Codemode passes no options, so put settings in the prompt: `@aspect=16:9 @size=2K`
+(sizes `512`, `1K`, `2K`, `4K`). Images are not saved; the script must write them to disk.
+
+```js
+const m = await models.getModelOfType("image", "google-vertex-images", "gemini-3.1-flash-image");
+const r = await models.generateImages(m, { input: [{ type: "text", text: "@aspect=16:9 A red fox" }] });
+for (const b of r.output) if (b.type === "image") image(b);
+```
+
 Vertex AI does not support Anthropic's server-side `fallbacks` request parameter. The
 Claude adapter removes that Anthropic-only model metadata before sending requests.
 
