@@ -32,28 +32,14 @@ function stripVertexCompat(
 }
 
 function getAnthropicVertexModels(): VertexModel[] {
+  // Pass through all catalog metadata (cost, promptCache, inputLimits, ...)
+  // so new catalog fields reach Vertex models without changes here.
+  // Without promptCache, Pi does not keep the prompt cache warm.
   return getModels("anthropic").map(
-    ({
-      id,
-      name,
-      compat,
-      reasoning,
-      thinkingLevelMap,
-      input,
-      cost,
-      contextWindow,
-      maxTokens,
-    }) => ({
-      id,
-      name,
+    ({ api: _api, provider: _provider, baseUrl: _baseUrl, compat, ...model }) => ({
+      ...model,
       // Vertex does not support Anthropic's server-side `fallbacks` parameter.
       compat: stripVertexCompat(compat),
-      reasoning,
-      thinkingLevelMap,
-      input,
-      cost,
-      contextWindow,
-      maxTokens,
     }),
   );
 }

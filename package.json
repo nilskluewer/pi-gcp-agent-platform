@@ -1,6 +1,6 @@
 {
   "name": "@nilskluewer/pi-gcp-agent-platform",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Use Claude and Gemini models on Google Cloud Vertex AI / Gemini Enterprise Agent Platform from pi.",
   "type": "module",
   "keywords": [
