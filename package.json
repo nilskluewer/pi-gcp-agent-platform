@@ -48,7 +48,9 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "scripts": {
-    "pack:dry": "npm pack --dry-run --registry=https://registry.npmjs.org/"
+    "pack:dry": "npm pack --dry-run --registry=https://registry.npmjs.org/",
+    "smoke": "node scripts/smoke.mjs",
+    "prepublishOnly": "npm run smoke"
   },
   "publishConfig": {
     "access": "public",
