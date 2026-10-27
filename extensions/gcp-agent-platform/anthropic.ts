@@ -21,7 +21,17 @@ import {
 } from "@earendil-works/pi-ai/compat";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-type VertexModel = Omit<Model<Api>, "api" | "provider" | "baseUrl">;
+export type AnthropicCacheTtl = "5m" | "1h" | "off";
+
+export const ANTHROPIC_CACHE_MODELS = new Set([
+  "claude-haiku-5-5",
+  "claude-sonnet-5-5",
+  "claude-opus-5-5",
+]);
+
+type VertexModel = Omit<Model<Api>, "api" | "provider" | "baseUrl"> & {
+  promptCache?: { short?: number; long?: number };
+};
 
 function stripVertexCompat(
   compat: AnthropicMessagesCompat | undefined,
@@ -31,16 +41,54 @@ function stripVertexCompat(
   return vertexCompat;
 }
 
-function getAnthropicVertexModels(): VertexModel[] {
-  // Pass through all catalog metadata (cost, promptCache, inputLimits, ...)
-  // so new catalog fields reach Vertex models without changes here.
-  // Without promptCache, Pi does not keep the prompt cache warm.
+export function getAnthropicVertexModels(
+  anthropicCacheTtl: AnthropicCacheTtl = "5m",
+): VertexModel[] {
+  // Pass through catalog metadata (cost, inputLimits, ...) and apply
+  // promptCache TTL configuration only to the target Claude 5.5 models.
   return getModels("anthropic").map(
-    ({ api: _api, provider: _provider, baseUrl: _baseUrl, compat, ...model }) => ({
-      ...model,
-      // Vertex does not support Anthropic's server-side `fallbacks` parameter.
-      compat: stripVertexCompat(compat),
-    }),
+    ({ api: _api, provider: _provider, baseUrl: _baseUrl, compat, ...model }) => {
+      const strippedCompat = stripVertexCompat(compat);
+      if (!ANTHROPIC_CACHE_MODELS.has(model.id)) {
+        return {
+          ...model,
+          promptCache: undefined,
+          // Vertex does not support Anthropic's server-side `fallbacks` parameter.
+          compat: strippedCompat,
+        };
+      }
+
+      if (anthropicCacheTtl === "off") {
+        return {
+          ...model,
+          promptCache: undefined,
+          compat: {
+            ...strippedCompat,
+            supportsLongCacheRetention: false,
+          },
+        };
+      }
+
+      if (anthropicCacheTtl === "1h") {
+        return {
+          ...model,
+          promptCache: { short: 3600, long: 3600 },
+          compat: {
+            ...strippedCompat,
+            supportsLongCacheRetention: true,
+          },
+        };
+      }
+
+      return {
+        ...model,
+        promptCache: { short: 300, long: 3600 },
+        compat: {
+          ...strippedCompat,
+          supportsLongCacheRetention: false,
+        },
+      };
+    },
   );
 }
 
@@ -49,6 +97,7 @@ export function registerAnthropicVertexProvider(
   project: string | undefined,
   region: string,
   baseUrl: string,
+  anthropicCacheTtl: AnthropicCacheTtl = "5m",
 ): void {
   sharedClient.clear();
 
@@ -64,7 +113,7 @@ export function registerAnthropicVertexProvider(
     throw new Error("Built-in anthropic-messages provider not found");
   }
 
-  const models = getAnthropicVertexModels();
+  const models = getAnthropicVertexModels(anthropicCacheTtl);
   if (models.length === 0) return;
 
   pi.registerProvider("anthropic-vertex", {
@@ -84,6 +133,7 @@ export function registerAnthropicVertexProvider(
         client,
         options,
         model,
+        anthropicCacheTtl,
       );
 
       // The delegated provider expects the model API to match its own API.
@@ -93,12 +143,22 @@ export function registerAnthropicVertexProvider(
   });
 }
 
-function mapStreamToAnthropicOptions(
+export function mapStreamToAnthropicOptions(
   client: AnthropicVertex,
   options: SimpleStreamOptions | undefined,
   model: Model<Api>,
+  anthropicCacheTtl: AnthropicCacheTtl = "5m",
 ): AnthropicOptions {
   const baseMaxTokens = options?.maxTokens;
+  const cacheRetention: AnthropicOptions["cacheRetention"] = !ANTHROPIC_CACHE_MODELS.has(
+    model.id,
+  )
+    ? "none"
+    : anthropicCacheTtl === "off"
+      ? "none"
+      : anthropicCacheTtl === "1h"
+        ? (options?.cacheRetention ?? "long")
+        : (options?.cacheRetention ?? "short");
 
   return {
     // AnthropicVertex exposes the messages API but is not typed as Anthropic.
@@ -108,7 +168,7 @@ function mapStreamToAnthropicOptions(
     signal: options?.signal,
     apiKey: options?.apiKey,
     transport: options?.transport,
-    cacheRetention: options?.cacheRetention,
+    cacheRetention,
     sessionId: options?.sessionId,
     headers: options?.headers,
     onPayload: options?.onPayload,

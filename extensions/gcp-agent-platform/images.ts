@@ -11,6 +11,7 @@
 import { execFileSync } from "node:child_process";
 import type { AssistantImages, ImageModel, ImagesContext, ImagesOptions } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { GoogleAuth } from "google-auth-library";
 
 const API = "vertex-gemini-images";
 const PROVIDER = "google-vertex-images";
@@ -19,15 +20,32 @@ const PRICE = { input: 0.5, text: 3, image: 60 };
 // gemini-3.1-flash-image is available in `global` and the `eu` multi-region only.
 const MODELS = [{ id: "gemini-3.1-flash-image", name: "Nano Banana 2 (gemini-3.1-flash-image)" }];
 
+let googleAuth: GoogleAuth | undefined;
 let token: { value: string; expires: number } | undefined;
-function accessToken(): string {
-  if (!token || token.expires < Date.now()) {
-    const value = execFileSync("gcloud", ["auth", "application-default", "print-access-token"], {
-      encoding: "utf8",
-      timeout: 15_000,
-    }).trim();
-    token = { value, expires: Date.now() + 30 * 60_000 };
+
+async function accessToken(): Promise<string> {
+  if (token && token.expires > Date.now()) {
+    return token.value;
   }
+
+  try {
+    googleAuth ??= new GoogleAuth({
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+    const clientToken = await googleAuth.getAccessToken();
+    if (clientToken) {
+      token = { value: clientToken, expires: Date.now() + 30 * 60_000 };
+      return token.value;
+    }
+  } catch {
+    // Fall back to gcloud CLI below if GoogleAuth fails.
+  }
+
+  const value = execFileSync("gcloud", ["auth", "application-default", "print-access-token"], {
+    encoding: "utf8",
+    timeout: 15_000,
+  }).trim();
+  token = { value, expires: Date.now() + 30 * 60_000 };
   return token.value;
 }
 
@@ -37,6 +55,9 @@ export function registerVertexImagesProvider(
   region: string,
   baseUrl: string,
 ): void {
+  googleAuth = undefined;
+  token = undefined;
+
   if (!project) return;
 
   pi.registerProvider(PROVIDER, {
@@ -77,7 +98,7 @@ export function registerVertexImagesProvider(
             const res = await (options?.fetch ?? fetch)(url, {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${accessToken()}`,
+                Authorization: `Bearer ${await accessToken()}`,
                 "X-Goog-User-Project": project,
                 "Content-Type": "application/json",
               },

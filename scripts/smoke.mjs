@@ -51,7 +51,18 @@ const onData = (chunk) => {
     try {
       const message = JSON.parse(line)
       if (message.type === "response" && message.command === "get_commands") {
-        return finish(message.success ? undefined : "get_commands failed: " + JSON.stringify(message))
+        if (!message.success) {
+          return finish("get_commands failed: " + JSON.stringify(message))
+        }
+        const commands = (message.data?.commands ?? []).map((cmd) => cmd.name)
+        const requiredCommands = ["setup-gemini-vertexai", "setup-vertexai", "vertex-cache"]
+        const missingCommands = requiredCommands.filter((name) => !commands.includes(name))
+        if (missingCommands.length > 0) {
+          return finish(
+            `missing expected commands: ${missingCommands.join(", ")} (got: ${commands.join(", ")})`,
+          )
+        }
+        return finish()
       }
     } catch {}
   }
