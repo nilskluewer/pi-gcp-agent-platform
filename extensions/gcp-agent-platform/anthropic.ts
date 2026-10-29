@@ -1,9 +1,9 @@
 /**
  * Anthropic Claude on Google Cloud Vertex AI / Gemini Enterprise Agent Platform.
  *
- * The parent extension owns Google Cloud project, region, ADC setup, and the
- * setup command. This module only adapts AnthropicVertex to Pi's built-in
- * anthropic-messages stream implementation.
+ * The parent extension owns Google Cloud project, region, strict auth credential
+ * resolution, and the setup command. This module adapts AnthropicVertex to Pi's
+ * built-in anthropic-messages stream implementation.
  */
 
 import { AnthropicVertex, type ClientOptions } from "@anthropic-ai/vertex-sdk";
@@ -13,6 +13,7 @@ import {
   type AnthropicMessagesCompat,
   type AnthropicOptions,
   type Api,
+  type Context,
   type Model,
   type ProviderHeaders,
   type SimpleStreamOptions,
@@ -20,6 +21,7 @@ import {
   type ThinkingLevel,
 } from "@earendil-works/pi-ai/compat";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { GoogleAuth } from "google-auth-library";
 
 export type AnthropicCacheTtl = "5m" | "1h" | "off";
 
@@ -29,6 +31,10 @@ export const ANTHROPIC_CACHE_MODELS = new Set([
   "claude-opus-5-5",
 ]);
 
+const CONTEXT_SAFETY_TOKENS = 4096;
+const MIN_MAX_TOKENS = 1;
+const VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
+
 type VertexModel = Omit<Model<Api>, "api" | "provider" | "baseUrl"> & {
   promptCache?: { short?: number; long?: number };
 };
@@ -37,22 +43,22 @@ function stripVertexCompat(
   compat: AnthropicMessagesCompat | undefined,
 ): AnthropicMessagesCompat | undefined {
   if (!compat) return undefined;
-  const { allowedFallbackModels: _allowedFallbackModels, ...vertexCompat } = compat;
+  const { allowedFallbackModels: _allowedFallbackModels, ...vertexCompat } =
+    compat;
   return vertexCompat;
 }
 
 export function getAnthropicVertexModels(
   anthropicCacheTtl: AnthropicCacheTtl = "5m",
 ): VertexModel[] {
-  // Pass through catalog metadata (cost, inputLimits, ...) and apply
-  // promptCache TTL configuration only to the target Claude 5.5 models.
+  // Preserve catalog metadata (cost, inputLimits, promptCache on older models)
+  // and apply the configured TTL tier specifically to the Claude 5.5 models.
   return getModels("anthropic").map(
     ({ api: _api, provider: _provider, baseUrl: _baseUrl, compat, ...model }) => {
       const strippedCompat = stripVertexCompat(compat);
       if (!ANTHROPIC_CACHE_MODELS.has(model.id)) {
         return {
           ...model,
-          promptCache: undefined,
           // Vertex does not support Anthropic's server-side `fallbacks` parameter.
           compat: strippedCompat,
         };
@@ -98,6 +104,7 @@ export function registerAnthropicVertexProvider(
   region: string,
   baseUrl: string,
   anthropicCacheTtl: AnthropicCacheTtl = "5m",
+  resolveCredentialsFile?: () => string,
 ): void {
   sharedClient.clear();
 
@@ -119,51 +126,99 @@ export function registerAnthropicVertexProvider(
   pi.registerProvider("anthropic-vertex", {
     baseUrl,
     apiKey: "$GOOGLE_CLOUD_PROJECT",
-    api: "anthropic-vertex",
+    api: "anthropic-messages",
     models,
     streamSimple: (
       model: Model<Api>,
       context,
       options?: SimpleStreamOptions,
     ) => {
+      const keyFilename = resolveCredentialsFile
+        ? resolveCredentialsFile()
+        : process.env.GOOGLE_APPLICATION_CREDENTIALS;
       const modelCompat = model.compat as AnthropicMessagesCompat | undefined;
       const isAdaptive = modelCompat?.forceAdaptiveThinking === true;
-      const client = createVertexClient(project, region, isAdaptive, options?.headers);
+      const client = createVertexClient(
+        project,
+        region,
+        isAdaptive,
+        options?.headers,
+        keyFilename,
+      );
       const anthropicOptions = mapStreamToAnthropicOptions(
         client,
         options,
         model,
+        context,
         anthropicCacheTtl,
       );
 
-      // The delegated provider expects the model API to match its own API.
       const patchedModel = { ...model, api: "anthropic-messages" as Api };
       return anthropicApi.stream(patchedModel, context, anthropicOptions);
     },
   });
 }
 
+function estimateContextChars(context: Context): number {
+  let chars = context.systemPrompt?.length ?? 0;
+  for (const msg of context.messages ?? []) {
+    if (typeof msg.content === "string") {
+      chars += msg.content.length;
+    } else if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if ("text" in block && typeof block.text === "string") {
+          chars += block.text.length;
+        } else if ("thinking" in block && typeof block.thinking === "string") {
+          chars += block.thinking.length;
+        }
+      }
+    }
+  }
+  return chars;
+}
+
+function clampMaxTokensToContext(
+  model: Model<Api>,
+  context: Context | undefined,
+  maxTokens: number,
+): number {
+  if (!context || model.contextWindow <= 0) {
+    return Math.max(MIN_MAX_TOKENS, maxTokens);
+  }
+  const estimatedTokens = Math.ceil(estimateContextChars(context) / 4);
+  const available = model.contextWindow - estimatedTokens - CONTEXT_SAFETY_TOKENS;
+  return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
+}
+
 export function mapStreamToAnthropicOptions(
   client: AnthropicVertex,
   options: SimpleStreamOptions | undefined,
   model: Model<Api>,
+  context?: Context,
   anthropicCacheTtl: AnthropicCacheTtl = "5m",
 ): AnthropicOptions {
   const baseMaxTokens = options?.maxTokens;
   const cacheRetention: AnthropicOptions["cacheRetention"] = !ANTHROPIC_CACHE_MODELS.has(
     model.id,
   )
-    ? "none"
+    ? options?.cacheRetention
     : anthropicCacheTtl === "off"
       ? "none"
       : anthropicCacheTtl === "1h"
         ? (options?.cacheRetention ?? "long")
         : (options?.cacheRetention ?? "short");
 
+  const thinkingOpts = buildThinkingOptions(baseMaxTokens, options, model, context);
+  const resolvedMaxTokens =
+    thinkingOpts.maxTokens ??
+    (baseMaxTokens !== undefined
+      ? clampMaxTokensToContext(model, context, baseMaxTokens)
+      : clampMaxTokensToContext(model, context, model.maxTokens));
+
   return {
     // AnthropicVertex exposes the messages API but is not typed as Anthropic.
     client: client as unknown as AnthropicOptions["client"],
-    maxTokens: baseMaxTokens,
+    maxTokens: resolvedMaxTokens,
     temperature: options?.temperature,
     signal: options?.signal,
     apiKey: options?.apiKey,
@@ -171,15 +226,17 @@ export function mapStreamToAnthropicOptions(
     cacheRetention,
     sessionId: options?.sessionId,
     headers: options?.headers,
+    toolChoice: options?.toolChoice,
     onPayload: options?.onPayload,
     onResponse: options?.onResponse,
+    onProviderStreamEvent: options?.onProviderStreamEvent,
     timeoutMs: options?.timeoutMs,
     websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
     maxRetries: options?.maxRetries,
     maxRetryDelayMs: options?.maxRetryDelayMs,
     metadata: options?.metadata,
     env: options?.env,
-    ...buildThinkingOptions(baseMaxTokens, options, model),
+    ...thinkingOpts,
   };
 }
 
@@ -187,6 +244,7 @@ function buildThinkingOptions(
   maxTokens: number | undefined,
   options: SimpleStreamOptions | undefined,
   model: Model<Api>,
+  context?: Context,
 ): {
   thinkingEnabled: boolean;
   effort?: AnthropicOptions["effort"];
@@ -211,11 +269,19 @@ function buildThinkingOptions(
     options.reasoning,
     options.thinkingBudgets,
   );
+  const clampedMaxTokens = clampMaxTokensToContext(
+    model,
+    context,
+    adjusted.maxTokens,
+  );
 
   return {
     thinkingEnabled: true,
-    maxTokens: adjusted.maxTokens,
-    thinkingBudgetTokens: adjusted.thinkingBudget,
+    maxTokens: clampedMaxTokens,
+    thinkingBudgetTokens: Math.min(
+      adjusted.thinkingBudget,
+      Math.max(0, clampedMaxTokens - 1024),
+    ),
   };
 }
 
@@ -269,28 +335,40 @@ function adjustMaxTokensForThinking(
   return { maxTokens, thinkingBudget };
 }
 
-type Profile = "adaptive" | "legacy";
-const sharedClient = new Map<Profile, AnthropicVertex>();
+const sharedClient = new Map<string, AnthropicVertex>();
 
 function createVertexClient(
   project: string,
   region: string,
   isAdaptive: boolean,
   requestHeaders?: ProviderHeaders,
+  keyFilename?: string,
 ): AnthropicVertex {
   if (requestHeaders && Object.keys(requestHeaders).length > 0) {
     return new AnthropicVertex(
-      createVertexClientOpts(project, region, isAdaptive, requestHeaders),
+      createVertexClientOpts(
+        project,
+        region,
+        isAdaptive,
+        requestHeaders,
+        keyFilename,
+      ),
     );
   }
 
-  const profile: Profile = isAdaptive ? "adaptive" : "legacy";
-  let client = sharedClient.get(profile);
+  const profileKey = `${isAdaptive ? "adaptive" : "legacy"}:${keyFilename ?? ""}`;
+  let client = sharedClient.get(profileKey);
   if (!client) {
     client = new AnthropicVertex(
-      createVertexClientOpts(project, region, isAdaptive),
+      createVertexClientOpts(
+        project,
+        region,
+        isAdaptive,
+        undefined,
+        keyFilename,
+      ),
     );
-    sharedClient.set(profile, client);
+    sharedClient.set(profileKey, client);
   }
 
   return client;
@@ -301,7 +379,14 @@ export function createVertexClientOpts(
   region: string,
   isAdaptive: boolean,
   requestHeaders?: ProviderHeaders,
+  keyFilename?: string,
 ): ClientOptions {
+  const googleAuth = keyFilename
+    ? new GoogleAuth({
+        keyFilename,
+        scopes: [VERTEX_SCOPE],
+      })
+    : undefined;
   const betaHeaders: string[] = [];
   if (!isAdaptive) betaHeaders.push("interleaved-thinking-2025-05-14");
 
@@ -317,14 +402,26 @@ export function createVertexClientOpts(
     return {
       projectId,
       region,
+      ...(googleAuth ? { googleAuth } : {}),
       defaultHeaders: {
         ...requestHeaders,
         "anthropic-beta": [...new Set(betaHeaders)].join(","),
       },
     };
 
-  if (!requestHeaders) return { projectId, region };
+  if (!requestHeaders) {
+    return {
+      projectId,
+      region,
+      ...(googleAuth ? { googleAuth } : {}),
+    };
+  }
 
   const { "anthropic-beta": _ignoredBeta, ...defaultHeaders } = requestHeaders;
-  return { projectId, region, defaultHeaders };
+  return {
+    projectId,
+    region,
+    ...(googleAuth ? { googleAuth } : {}),
+    defaultHeaders,
+  };
 }

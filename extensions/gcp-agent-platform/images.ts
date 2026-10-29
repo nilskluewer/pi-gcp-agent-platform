@@ -8,44 +8,57 @@
  * model-chosen aspect). Directives are stripped before sending.
  */
 
-import { execFileSync } from "node:child_process";
 import type { AssistantImages, ImageModel, ImagesContext, ImagesOptions } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { GoogleAuth } from "google-auth-library";
 
 const API = "vertex-gemini-images";
 const PROVIDER = "google-vertex-images";
+const VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 // USD per 1M tokens, standard traffic. EU multi-region has no flex.
 const PRICE = { input: 0.5, text: 3, image: 60 };
 // gemini-3.1-flash-image is available in `global` and the `eu` multi-region only.
 const MODELS = [{ id: "gemini-3.1-flash-image", name: "Nano Banana 2 (gemini-3.1-flash-image)" }];
 
-let googleAuth: GoogleAuth | undefined;
-let token: { value: string; expires: number } | undefined;
+let googleAuth: { keyFilename: string; client: GoogleAuth } | undefined;
+let token: { keyFilename: string; value: string; expires: number } | undefined;
 
-async function accessToken(): Promise<string> {
-  if (token && token.expires > Date.now()) {
+async function accessToken(resolveCredentialsFile?: () => string): Promise<string> {
+  const keyFilename = resolveCredentialsFile
+    ? resolveCredentialsFile()
+    : process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (!keyFilename) {
+    throw new Error(
+      "No active Google Cloud credential file resolved for the selected authentication mode.",
+    );
+  }
+
+  if (token && token.keyFilename === keyFilename && token.expires > Date.now()) {
     return token.value;
   }
 
-  try {
-    googleAuth ??= new GoogleAuth({
-      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-    });
-    const clientToken = await googleAuth.getAccessToken();
-    if (clientToken) {
-      token = { value: clientToken, expires: Date.now() + 30 * 60_000 };
-      return token.value;
-    }
-  } catch {
-    // Fall back to gcloud CLI below if GoogleAuth fails.
+  if (!googleAuth || googleAuth.keyFilename !== keyFilename) {
+    googleAuth = {
+      keyFilename,
+      client: new GoogleAuth({
+        keyFilename,
+        scopes: [VERTEX_SCOPE],
+      }),
+    };
   }
 
-  const value = execFileSync("gcloud", ["auth", "application-default", "print-access-token"], {
-    encoding: "utf8",
-    timeout: 15_000,
-  }).trim();
-  token = { value, expires: Date.now() + 30 * 60_000 };
+  const clientToken = await googleAuth.client.getAccessToken();
+  if (!clientToken) {
+    throw new Error(
+      `Failed to acquire Google OAuth access token from ${keyFilename}.`,
+    );
+  }
+
+  token = {
+    keyFilename,
+    value: clientToken,
+    expires: Date.now() + 30 * 60_000,
+  };
   return token.value;
 }
 
@@ -54,6 +67,7 @@ export function registerVertexImagesProvider(
   project: string | undefined,
   region: string,
   baseUrl: string,
+  resolveCredentialsFile?: () => string,
 ): void {
   googleAuth = undefined;
   token = undefined;
@@ -98,7 +112,7 @@ export function registerVertexImagesProvider(
             const res = await (options?.fetch ?? fetch)(url, {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${await accessToken()}`,
+                Authorization: `Bearer ${await accessToken(resolveCredentialsFile)}`,
                 "X-Goog-User-Project": project,
                 "Content-Type": "application/json",
               },
