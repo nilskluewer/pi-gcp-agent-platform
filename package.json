@@ -1,6 +1,6 @@
 {
   "name": "@nilskluewer/pi-gcp-agent-platform",
-  "version": "0.2.1",
+  "version": "0.4.0",
   "description": "Use Claude and Gemini models on Google Cloud Vertex AI / Gemini Enterprise Agent Platform from pi.",
   "type": "module",
   "keywords": [
@@ -32,6 +32,8 @@
   "homepage": "https://github.com/nilskluewer/pi-gcp-agent-platform#readme",
   "files": [
     "extensions",
+    "assets",
+    "PATCH_NOTES.md",
     "README.md",
     "LICENSE"
   ],
@@ -50,6 +52,7 @@
   "scripts": {
     "pack:dry": "npm pack --dry-run --registry=https://registry.npmjs.org/",
     "smoke": "node scripts/smoke.mjs",
+    "test": "node --experimental-strip-types scripts/setup.test.mjs",
     "prepublishOnly": "npm run smoke"
   },
   "publishConfig": {

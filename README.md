@@ -1,5 +1,17 @@
 # @nilskluewer/pi-gcp-agent-platform
 
+![Vertex AI setup with ADC, Service Account JSON key, and Service Account impersonation](./assets/authentication-setup.png)
+
+**Three authentication methods for Claude and Gemini on Vertex AI:**
+
+- **ADC** — sign in with your Google user account.
+- **Service Account JSON key** — select your key file.
+- **Service Account impersonation** — select a target Service Account and source credentials.
+
+Run `/setup-gemini-vertexai` to choose a method. If the selected credentials fail, requests stop instead of falling back to another authentication method.
+
+**New in 0.4.0:** authentication-first setup, Enter to keep the current project and location, and cache settings through `/vertex-cache`. See [patch notes](./PATCH_NOTES.md).
+
 ## Overview
 
 Use Claude and Gemini models through Google Cloud Vertex AI / Gemini Enterprise Agent
@@ -18,7 +30,7 @@ All providers share the same Google Cloud project, location, credentials, and pr
 ```bash
 pi install npm:@nilskluewer/pi-gcp-agent-platform
 pi
-/setup-gemini-vertexai your-project-id eu
+/setup-gemini-vertexai
 /model google-vertex/gemini-3.5-flash-lite
 ```
 
@@ -69,7 +81,9 @@ Examples:
 /setup-gemini-vertexai my-project-id global
 ```
 
-The interactive setup wizard configures the project, location, authentication mode, and prompt-caching TTLs, and saves them to:
+Run `/setup-gemini-vertexai` without arguments to open the interactive wizard. It asks for the authentication method first, then the project ID and location, followed by credential details and prompt-caching TTLs. Press Enter at the project or location prompt to keep the current value. Press Escape at these initial prompts to cancel without saving.
+
+The wizard saves the configuration to:
 
 ```text
 ~/.pi/agent/gcp-agent-platform.json
@@ -91,7 +105,7 @@ The interactive setup wizard configures the project, location, authentication mo
 
 ### Environment Variables
 
-Environment variables override the saved setup:
+Project and location environment variables override the saved setup at startup. An explicitly saved authentication method takes precedence over ambient credentials. The credential and cache variables below provide defaults when the corresponding saved settings are absent:
 
 | Name | Description | Default |
 |------|-------------|---------|
@@ -102,7 +116,7 @@ Environment variables override the saved setup:
 | `CLOUD_ML_REGION` | Region fallback. | Optional |
 | `VERTEX_REGION` | Additional region fallback. | Optional |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account JSON key or generated impersonated ADC file. | Saved key path or generated impersonation file |
-| `VERTEX_IMPERSONATE_SERVICE_ACCOUNT` | Target service account email (`sa@project.iam.gserviceaccount.com`) for impersonation. | Saved `impersonateServiceAccount` |
+| `VERTEX_IMPERSONATE_SERVICE_ACCOUNT` | Target email fallback when impersonation mode is explicitly configured. Does not select impersonation mode by itself. | Saved `impersonateServiceAccount` |
 | `PI_CACHE_RETENTION` | Anthropic prompt-cache retention (`short` or `long`). | Saved `anthropicCacheTtl` (`5m`) |
 
 The package reads the former Anthropic Vertex setup file (`~/.pi/agent/anthropic-vertex-enterprise-agent-platform.json`) as a migration fallback, and writes new configuration to `~/.pi/agent/gcp-agent-platform.json`.
@@ -211,6 +225,10 @@ pi install npm:@nilskluewer/pi-gcp-agent-platform
 ```
 
 `pi-vertex-gemini-search` is a separate optional web-search extension and is not part of this model package.
+
+## Patch notes
+
+See [PATCH_NOTES.md](./PATCH_NOTES.md) for release changes.
 
 ## License
 

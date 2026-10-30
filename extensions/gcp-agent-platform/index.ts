@@ -843,15 +843,28 @@ function registerSetupCommand(pi: ExtensionAPI): void {
   const handler = async (args: string, ctx: ExtensionCommandContext) => {
     const cli = parseSetupArgs(args);
     const hasCliArgs = args.trim().length > 0;
+    let authSelection: string | undefined;
+    if (!hasCliArgs && ctx.hasUI) {
+      authSelection = await ctx.ui.select(
+        "Vertex AI authentication method",
+        [
+          "adc (Application Default Credentials)",
+          "service-account (Service Account JSON key file)",
+          "impersonation (Impersonate a Service Account)",
+        ],
+      );
+      if (authSelection === undefined) return;
+    }
 
-    const project =
-      cli.project ||
-      (ctx.hasUI
-        ? await ctx.ui.input(
-            "Google Cloud project ID",
-            currentConfig.project || "your-project-id",
-          )
-        : undefined);
+    let project = cli.project?.trim();
+    if (!project && ctx.hasUI) {
+      const projectInput = await ctx.ui.input(
+        "Google Cloud project ID",
+        currentConfig.project || "your-project-id",
+      );
+      if (projectInput === undefined) return; // Escape cancels setup.
+      project = projectInput.trim() || currentConfig.project;
+    }
     if (!project) {
       ctx.ui.notify(
         "Usage: /setup-gemini-vertexai <google-cloud-project> [location] [--auth adc|service-account|impersonation] [--key <path>] [--impersonate <sa-email>] [--anthropic-ttl 5m|1h|off] [--gemini-ttl <seconds|off>]",
@@ -860,16 +873,15 @@ function registerSetupCommand(pi: ExtensionAPI): void {
       return;
     }
 
-    const region =
-      cli.location ||
-      (!hasCliArgs && ctx.hasUI
-        ? await ctx.ui.input(
-            "Vertex AI location (eu, global, us, ...)",
-            currentConfig.location || DEFAULT_REGION,
-          )
-        : undefined) ||
-      currentConfig.location ||
-      DEFAULT_REGION;
+    let region = cli.location?.trim() || currentConfig.location || DEFAULT_REGION;
+    if (!hasCliArgs && ctx.hasUI) {
+      const regionInput = await ctx.ui.input(
+        "Vertex AI location (eu, global, us, ...)",
+        region,
+      );
+      if (regionInput === undefined) return;
+      region = regionInput.trim() || region;
+    }
 
     let authMode: AuthMode = cli.authMode ?? currentConfig.authMode;
     let serviceAccountKeyPath =
@@ -878,14 +890,6 @@ function registerSetupCommand(pi: ExtensionAPI): void {
       cli.impersonateServiceAccount ?? currentConfig.impersonateServiceAccount;
 
     if (!hasCliArgs && ctx.hasUI) {
-      const authSelection = await ctx.ui.select(
-        "Vertex AI authentication method",
-        [
-          "adc (Application Default Credentials)",
-          "service-account (Service Account JSON key file)",
-          "impersonation (Impersonate a Service Account)",
-        ],
-      );
       if (authSelection?.startsWith("service-account")) {
         authMode = "service-account";
         const keyInput = await ctx.ui.input(
